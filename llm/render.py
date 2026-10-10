@@ -84,7 +84,8 @@ Output format:
 
 Generate the prose now:"""
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    model = genai.GenerativeModel(model_name)
     response = model.generate_content(prompt)
 
     prose = response.text.strip()

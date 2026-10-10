@@ -38,7 +38,9 @@ def test_parse_low_confidence_car():
     result = parse(text, TODAY)
 
     assert result.confidence < 0.5
-    assert result.amount is None
+    # core.model.DecisionDelta.amount is a non-optional float; 0.0 is the
+    # "no amount" sentinel, not None.
+    assert result.amount == 0.0
 
 
 def test_parse_laptop_next_week():

@@ -23,12 +23,17 @@ def parse(text: str, today: date) -> DecisionDelta:
     """
     try:
         return _parse_with_gemini(text, today)
-    except Exception as e:
-        # Graceful degradation: return low-confidence result
+    except Exception:
+        # Graceful degradation: low-confidence result that still satisfies
+        # core.model.DecisionDelta's frozen contract (kind must be a valid
+        # DELTA_KINDS enum value; amount/start_day are non-optional floats).
+        # confidence=0.0 and amount=0.0 make this fail validate_delta()'s
+        # amount<=0 / confidence<0.5 checks downstream, which is the correct
+        # "ask the user to rephrase" behavior per the spec.
         return DecisionDelta(
-            kind="unknown",
-            amount=None,
-            start_day=None,
+            kind="one_time",
+            amount=0.0,
+            start_day=0.0,
             cadence_days=None,
             label=text[:50],
             raw_text=text,
@@ -78,39 +83,56 @@ Confidence:
 
 Message: {text}"""
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    model = genai.GenerativeModel(
+        model_name,
+        generation_config=genai.GenerationConfig(response_mime_type="application/json"),
+    )
     response = model.generate_content(prompt)
 
     import json
     result = json.loads(response.text)
 
-    # Post-model guards
-    delta = DecisionDelta(
-        kind=result.get("kind", "unknown"),
-        amount=result.get("amount"),
-        start_day=result.get("start_day"),
-        cadence_days=result.get("cadence_days"),
-        label=result.get("label", ""),
-        raw_text=text,
-        confidence=result.get("confidence", 0.0)
-    )
+    # Post-model guards applied to the raw dict first — DecisionDelta is a
+    # frozen dataclass (core.model), so it can only be constructed once with
+    # its final values, never mutated after the fact.
+    kind = result.get("kind") or "one_time"
+    if kind not in ("one_time", "recurring"):
+        kind = "one_time"
+    amount = result.get("amount")
+    start_day = result.get("start_day")
+    cadence_days = result.get("cadence_days")
+    label = result.get("label", "")
+    confidence = float(result.get("confidence", 0.0))
 
-    # Guard 1: amount null or <= 0 → low confidence
-    if delta.amount is None or delta.amount <= 0:
-        delta.confidence = min(delta.confidence, 0.49)
+    # Guard 1: amount null or <= 0 → low confidence, and amount must be a
+    # concrete float since DecisionDelta.amount is non-optional.
+    if amount is None or amount <= 0:
+        confidence = min(confidence, 0.49)
+        amount = 0.0
 
-    # Guard 2: amount must appear in raw_text
-    if delta.amount and not _amount_in_text(delta.amount, text):
-        delta.confidence = min(delta.confidence, 0.49)
+    # Guard 2: amount must appear in raw_text (the parser doesn't get to
+    # invent amounts either)
+    if amount and not _amount_in_text(amount, text):
+        confidence = min(confidence, 0.49)
 
     # Guard 3: recurring without cadence → default 30, cap confidence at 0.7
-    if delta.kind == "recurring" and delta.cadence_days is None:
-        delta.cadence_days = 30
-        delta.confidence = min(delta.confidence, 0.7)
+    if kind == "recurring" and cadence_days is None:
+        cadence_days = 30
+        confidence = min(confidence, 0.7)
 
-    # Guard 4: clamp start_day to [0, 730]
-    if delta.start_day is not None:
-        delta.start_day = max(0, min(730, delta.start_day))
+    # Guard 4: clamp start_day to [0, 730]; start_day is non-optional
+    start_day = 0.0 if start_day is None else max(0, min(730, start_day))
+
+    delta = DecisionDelta(
+        kind=kind,
+        amount=float(amount),
+        start_day=float(start_day),
+        cadence_days=cadence_days,
+        label=label,
+        raw_text=text,
+        confidence=confidence,
+    )
 
     return delta
 
