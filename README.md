@@ -21,6 +21,22 @@ web app ──► web/ ───┘          ─► simulate 500 futures (core/)
 - **Gemini writes at most one sentence** of the answer (the biggest recurring bill), and a validator rejects it if it
   contains any number the simulation didn't produce.
 
+## How we built it
+
+**The idea, design and components are the team's.** We came up with Pocketwatch and the approach behind it:
+simulating many possible futures from real transaction history instead of giving a single estimate, seeding demo
+customers in Nessie, delivering answers over iMessage with a replay to back them up, keeping the math in
+deterministic code with AI only reading the question, and the Frutiger Aero / Windows XP look. We split the work into
+the components above (simulation engine, data and API, parsing and wording, web app, iMessage agent), defined how they
+fit together, and made the product decisions along the way.
+
+**AI coding tools carried out the implementation.** We used OpenAI Codex and Claude Code to write and change code to
+our specifications: building out the components, refactoring, writing tests, fixing bugs and wiring up Supabase. We
+directed the work, reviewed what they produced, tested it, and decided what to keep.
+
+This is separate from the AI inside the product: Gemini reads each question and may write one checked sentence of the
+answer, as described above.
+
 ## Project layout
 
 | Folder | What's in it |
@@ -87,6 +103,17 @@ Settings:
   calls Gemini).
 - Tax share, loan rates, simulation size and horizon live in Supabase's `settings` table, with each person's own
   tax share and loan rates in `customer_settings`. The API picks up changes within a minute.
+- `RUN_STORE=postgres` saves replays in Supabase (using `DATABASE_URL`) instead of the local SQLite file, so they
+  survive redeploys. The default is `sqlite`.
+
+## Deploy
+
+- **API:** `render.yaml` deploys it to Render (`pip install -e .`, then `uvicorn api.main:app`) with
+  `RUN_STORE=postgres` and `REPLAY_BASE_URL=https://pocketwatch.tech`. Set the secrets (`DATABASE_URL`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`) in the Render dashboard.
+- **Keep-alive:** `.github/workflows/keepalive.yml` pings `https://api.pocketwatch.tech/health` every 5 minutes so the
+  free Render instance doesn't fall asleep.
+- **Database:** run `python -m data.supabase_setup` once against the Supabase project (it's safe to re-run).
 
 ## Things to ask
 
