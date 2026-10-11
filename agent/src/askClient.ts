@@ -1,4 +1,4 @@
-// Matches the HTTP surface frozen in 00-ARCHITECTURE.md:
+// Matches the API's HTTP surface (api/main.py):
 // POST /ask { text, customer_id } -> { run_id, prose, replay_url, validated }
 
 export interface AskResponse {

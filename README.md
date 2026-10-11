@@ -1,158 +1,123 @@
 # Pocketwatch
 
-A cached synthetic-bank population drives seeded cashflow simulations. See
-[00-ARCHITECTURE.md](00-ARCHITECTURE.md) for the contracts and ownership boundaries.
+**See what a purchase does to your next two years, before you make it.**
 
-Dev B's implementation is in `data/` and `api/`. It reads Nessie only during
-ingestion; HTTP requests fit locally cached records and call `core.run.run` in
-process. The Next.js frontend in `web/` uses the same cached API through a server proxy.
-See [web/INTEGRATION.md](web/INTEGRATION.md) for the connected desktop UI and local startup.
+Text a question like *"Can I afford a $400 phone today?"* over iMessage, or ask it in the web app. Pocketwatch
+learns your paycheck, bills and spending from your bank transactions (Capital One's Nessie API), simulates the next
+two years 500 times with and without the decision, and answers in plain English: the odds you'd dip below $0, when
+it would get tight, a safer time to do it, and a loan that would work. Every answer links to a replay with the chart
+and the transactions behind it.
 
-Install with Python 3.11 or newer:
+```
+iMessage ─► agent/ ─┐
+                    ├─► api/ ─► parse (Gemini fills fields, code checks every number)
+web app ──► web/ ───┘          ─► simulate 500 futures (core/) ─► plain-English answer + saved replay
+```
+
+- **Gemini reads the question** into fields (income, purchases, loans, dates). Code checks that every number in the
+  message is accounted for and does all the math, so a misread question is refused, never guessed. If Gemini is
+  unavailable, rule-based parsers take over.
+- **The simulation is deterministic** (fixed seed): the same question on the same data gives the same answer.
+- **Gemini writes at most one sentence** of the answer (the biggest recurring bill), and a validator rejects it if it
+  contains any number the simulation didn't produce.
+
+## Project layout
+
+| Folder | What's in it |
+|---|---|
+| `agent/` | iMessage agent (Photon Spectrum, TypeScript). Forwards texts to the API; replies with the answer, a replay link and image cards. |
+| `api/` | FastAPI service: `/ask`, replays, customers. The wording of every answer (`pipeline.py`) and adjustable settings (`settings.py`). |
+| `core/` | Simulation engine: cash-flow model, 500-path simulation, what's driving the risk, safer timing, financing, loans. |
+| `llm/` | Question parsing (`parse_complex.py`: Gemini plus rules), Gemini's answer sentence (`render.py`), number validator (`validate.py`). |
+| `data/` | Nessie tools (seed, ingest, fit) and `supabase_setup.py`. `cache/seeded/` holds the cached customers. |
+| `web/` | Next.js app: Frutiger Aero desktop, XP-style sign-in, replay pages, image cards. |
+| `supabase/` | Database schema (migrations). |
+| `docs/` | `MONEY_UNITS.md`: how amounts are stored (integer cents in Nessie). |
+
+## Setup
+
+Requires Python 3.11+ and Node 20+.
 
 ```sh
-uv venv .venv
-uv pip install --python .venv/bin/python -e '.[dev]'
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+(cd web && npm install && npx playwright install chromium && cp env.example .env.local)
+(cd agent && npm install && cp .env.example .env)
 cp .env.example .env
 ```
 
-For live data, set `NESSIE_API_KEY` in `.env`, then run:
+Fill in each env file (all are gitignored):
+
+| File | Needs |
+|---|---|
+| `.env` | `GEMINI_API_KEY`; Supabase `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `DATABASE_URL` (session pooler); `NESSIE_API_KEY` only to re-ingest |
+| `web/.env.local` | `API_BASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
+| `agent/.env` | Photon `PROJECT_ID` and `PROJECT_SECRET`, `API_BASE_URL`, `REPLAY_BASE_URL`, `CUSTOMER_PHONE_MAP` |
+
+Then create the database tables, customers, settings and logins (safe to re-run):
 
 ```sh
-.venv/bin/python -m data.ingest --count 5
-.venv/bin/python -m data.audit --output-dir data/cache/models
-.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m data.supabase_setup          # add --check to see what's there
 ```
 
-The example configuration pins the verified HTTPS production origin. Obtain a
-key at [Nessie’s production portal](https://prod.nessieisreal.com/). Ingest
-records the successful origin in each snapshot. Cache files contain all
-returned account resources; fitting uses the last 365 calendar days ending at
-the snapshot's `as_of` date. Ingestion is read-only. Use repeated
-`--customer-id ID` arguments to select specific customers. The count option
-caches the first available customers; use `--offset` to inspect a later batch.
-`--population auto` uses the enterprise population when your personal list is
-empty. Use `--population owned` to limit ingestion to your personal list, or
-`--population enterprise` explicitly. `--probe` reports accessible population
-counts and sample account resource schemas. Inspect the audit report and ingest more
-to choose five usable, different profiles. The report exposes fit failures,
-income cadence, recurring count, breach rates, and unresolved evidence. Population
-and ingest reports are saved under `data/cache/reports/`.
+## Run
 
-The live origin uses `payment_amount` for bills. A 404 for the legacy transfer
-or loan list route is recorded in `unavailable_collections`; its empty local list
-does not assert an observed absence of transactions. Deleted merchant references
-are retained in raw purchases and recorded in `unavailable_merchants`. Merchant
-labels then use the cached payee/description or original merchant ID. Other
-request failures skip the affected customer and appear in the ingest report.
-
-Restart the API after ingestion to load the new cache. Set `REPLAY_BASE_URL` to
-Dev D's frontend origin; the API returns an absolute `/r/{run_id}` URL. The API
-does not implement that frontend page.
-
-For offline development without keys:
+Three terminals, from the repo root:
 
 ```sh
-.venv/bin/python -m data.demo
-.venv/bin/python -m data.audit --cache-dir data/cache/demo --output-dir data/cache/demo/models
-COUNTERFACTUAL_CACHE_DIR=data/cache/demo COUNTERFACTUAL_DB_PATH=data/cache/demo/runs.sqlite3 COUNTERFACTUAL_PARSER=explicit .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+# 1. API on port 8002
+COUNTERFACTUAL_CACHE_DIR=data/cache/seeded \
+COUNTERFACTUAL_DB_PATH=data/cache/seeded/frontend-verification.sqlite3 \
+REPLAY_BASE_URL=http://127.0.0.1:3000 \
+.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8002
+
+# 2. Web app at http://127.0.0.1:3000
+cd web && npm run dev
+
+# 3. iMessage agent
+cd agent && npm run dev
 ```
 
-These five customers are **generated fixtures**, not records fetched from Nessie.
-Their names and snapshot metadata identify them as synthetic fixtures. The
-fixtures are anchored to 2026-10-09 for repeatable fitting.
+**Sign in** as any demo customer, for example `jordan@pocketwatch.tech` / `jordan-aero` (also alex, blair, casey,
+drew and ellis: the password is the first name, then `-aero`). Texting `test1` to `test5` gives an instant demo
+answer without calling Gemini.
 
-Example request:
+Settings:
+- `COUNTERFACTUAL_PARSER` in `.env`: `auto` (Gemini, then rules; the default), `llm` (Gemini only) or `rules` (never
+  calls Gemini).
+- Tax share, loan rates, simulation size and horizon live in Supabase's `settings` table, with each person's own
+  tax share and loan rates in `customer_settings`. The API picks up changes within a minute.
 
-```sh
-curl http://127.0.0.1:8000/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"demo_steady","text":"Can I afford $1400 today?"}'
-```
+## Things to ask
 
-The success shape is `{run_id, prose, replay_url, validated, rendered_by, render_failure_reason}`. The other routes
-are `/health`, `/customers`, `/model/{customer_id}`, `/run/{run_id}`, and
-`/txn/{txn_id}`. The additive `/run/{run_id}/inputs` route returns the exact
-fitted model, parsed decision, and raw evidence used in that run. SQLite stores
-these alongside the simulation and response. Transaction evidence from saved
-runs remains available when a subsequent cache no longer contains it.
+- `Can I afford $400 today?`
+- `thinking about a PS5 for $499 and 2 games at $70 each`
+- `If I made $3000 off of a bonus, could I buy a $1999 iPhone 18 Pro`
+- `I got a $500/month raise, can I swing $1,200/month rent starting in December?`
+- `can I afford a $400k house with 20% down` (uses your own mortgage rate)
+- `how much is my daily $6 coffee costing me a year?`
+- `what subscriptions could I cut?`
 
-`COUNTERFACTUAL_PARSER=auto` and `llm` use Dev C's local heuristic parser; parsing
-never calls Gemini. `explicit` uses the narrower offline parser for repeatable
-checks: `Can I afford $1400 today?`, `Can I afford $65/month starting today?`,
-and `spend $25/week in 30 days` are accepted forms.
-
-Rendering calls `llm.render.render(claims, culprit)` and validates with
-`llm.validate.validate(prose, claims, culprit)`. Main now attempts rendering
-once, caches accepted prose by claims, and uses a checked deterministic template
-on failure. `validated: true` can describe that template; it does not imply a
-Gemini call. The renderer needs `GEMINI_API_KEY` for live generation.
-Gemini calls use the supported `google-genai` SDK, installed with the project
-dependencies, through `genai.Client` and `client.models.generate_content`.
-
-The default text model is `gemini-3.5-flash-lite`; override it with
-`GEMINI_MODEL` in the root `.env`. Rendering is capped at 384 output tokens
-with one attempt per uncached claims set. Normal parsing remains local.
-Parse failures/low confidence and unfittable data return HTTP 422 with a rephrase or
-data error in `detail`.
-Unknown resources return 404. Simulation or persistence failure returns 503
-without a financial estimate or an unsaved replay link. Dev D should handle
-these status codes and display the `detail` message.
-
-Run checks and measure live HTTP latency:
+## Tests
 
 ```sh
 .venv/bin/python -m pytest -q
-.venv/bin/python -m api.benchmark --customer-id demo_steady --runs 10
+(cd web && npm test && npm run typecheck)
+(cd agent && npm run typecheck)
 ```
 
-Benchmarking creates saved runs. The measured development result and remaining
-integration items are in [data/HANDSHAKE_NOTES.md](data/HANDSHAKE_NOTES.md).
+`web/tests/summary-cases.json` is shared by the Python and web tests, so the text message and the replay page always
+word an answer the same way.
 
-The completed controlled synthetic population is cached in `data/cache/seeded/`:
-five customers, five active checking accounts, 15 merchants, 114 deposits, and
-380 purchases. **The user explicitly opted for integer USD cents stored in
-Nessie, decoded to dollars in this app.** For example, raw `9450` represents
-$94.50. Ordinary Nessie data retains dollar semantics. This is our application
-convention; Nessie itself does not know these integers represent cents.
+## Nessie data (only to rebuild it)
 
-See [docs/MONEY_UNITS.md](docs/MONEY_UNITS.md) for the unit contract and
-[SESSION_HANDOFF.md](SESSION_HANDOFF.md) for the approved design, actual profile
-IDs, verification, and next steps. Alex's customer ID is
-`39b2bdb2-e13c-4734-8522-1e2d43df6d1f`; the fitted opening balance is exactly
-$2,310.40. Raw records and original evidence IDs are preserved. `/txn/{id}` adds
-an `X-Monetary-Unit` response header, and saved `/run/{id}/inputs` includes an
-`amount_units` mapping. The model, simulation, claims, prose, and decisions all
-use dollars. An earlier partial dollar account is retained and excluded from
-fitting, with its legacy records recorded in the migration journal.
-
-The seed executor validates locally without requests, journals before each
-POST, reconciles uncertain outcomes, and never blindly retries POSTs. Its
-519 mapped active resources and original plan hash are in
-`data/cache/seeded/reports/seed-journal.json`. The existing seed can be
-re-ingested using the same plan and journal:
+The six demo customers already exist in Nessie and are cached in `data/cache/seeded/`. Amounts are stored in Nessie
+as integer cents (see `docs/MONEY_UNITS.md`). To rebuild:
 
 ```sh
-.venv/bin/python -m data.seed
-.venv/bin/python -m data.seed --execute --ingest
+.venv/bin/python -m data.seed                    # dry run: shows the plan
+.venv/bin/python -m data.seed --execute --ingest # create in Nessie and cache locally
 .venv/bin/python -m data.audit --cache-dir data/cache/seeded --output-dir data/cache/seeded/models
-COUNTERFACTUAL_CACHE_DIR=data/cache/seeded COUNTERFACTUAL_DB_PATH=data/cache/seeded/runs.sqlite3 COUNTERFACTUAL_PARSER=explicit .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8002
-.venv/bin/python -m api.benchmark --url http://127.0.0.1:8002 --customer-id 39b2bdb2-e13c-4734-8522-1e2d43df6d1f --verify-evidence
 ```
 
-A fresh checkout can generate a **new** local seed proposal with
-`python -m data.seed --write-plan`. It refuses to overwrite an existing plan.
-Do not regenerate a plan to resume an existing journal: the original hashes
-must match. To fetch this existing population from a fresh checkout, use
-read-only `data.ingest --population owned` with the customer IDs listed in the
-handoff; the remote account nicknames retain the unit and retirement markers.
-Caches, journals, SQLite and credentials are gitignored.
-
-Verification: **136 tests passed**, all five profiles fit and drive the actual
-core, all **494 active evidence IDs resolve**, exact cent values match the
-approved plan, and runs/units survive restart. The tracked summary is
-[docs/seed-verification.json](docs/seed-verification.json). The earlier
-enterprise-source cache and its reports remain in `data/cache/live-demo/`.
-The seeded localhost HTTP benchmark measured a median of **0.01344 seconds**
-over ten requests with one worker, explicit parser, checked template, and
-SQLite. Gemini, Photon, deployment and frontend rendering are excluded.
+Seeding never retries a request whose outcome is uncertain; `data/cache/seeded/reports/` holds its journal.

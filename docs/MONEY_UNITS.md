@@ -49,6 +49,5 @@ For Dev C and Dev D:
   unit rows use dollars. Conflicting raw records or units for an archived ID
   reject a save rather than silently changing financial evidence.
 
-The full seeded population's verification status and IDs are in
-`SESSION_HANDOFF.md` and `data/HANDSHAKE_NOTES.md`. Bank creation/ingestion happens
-outside requests; `/ask` still runs offline from the cache.
+The seeding journal and IDs are in `data/cache/seeded/reports/`. Bank creation/ingestion
+happens outside requests; `/ask` still runs offline from the cache.

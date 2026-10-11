@@ -77,13 +77,14 @@ const round0 = (n: number) => Math.floor(n + 0.5);
 const GENERIC_LABELS = new Set(["expense", "purchase", "explicit expense", "test fixture expense", "habit spending", "income",
   "one-time income", "extra income", "new income", "pay change", "rent ends", "loan", "afford"]);
 const ONE_TIME_INCOME = new Set(["bonus", "gift", "refund", "prize", "tax refund", "payout"]);
+const PRONOUNS = new Set(["it", "this", "that", "them", "these", "those", "one", "something", "stuff", "thing"]);
 // Odds within one point of the baseline count as "no change" (simulation noise).
 export const NO_CHANGE = 0.01;
 
 /** A label as it reads mid-sentence ("iPhone 18 Pro", "house"), or null if it names nothing. */
 export function noun(label: string | undefined | null, rawText = ""): string | null {
   const l = (label ?? "").trim();
-  if (!l || GENERIC_LABELS.has(l.toLowerCase()) || l.length > 30 || l.split(/\s+/).length > 4
+  if (!l || GENERIC_LABELS.has(l.toLowerCase()) || PRONOUNS.has(l.toLowerCase()) || l.length > 30 || l.split(/\s+/).length > 4
     || /[$?/]/.test(l) || / (payment|proceeds)$/i.test(l)) return null;
   const at = rawText.toLowerCase().indexOf(l.toLowerCase());
   if (at >= 0) return rawText.slice(at, at + l.length);
@@ -101,7 +102,9 @@ function itemPhrase(item: DecisionDelta, asked: Date | null, rawText = ""): stri
   const when = whenPhrase(item.start_day, asked);
   const thing = noun(item.label, rawText);
   if (item.kind === "recurring" && item.cadence_days) {
-    let phrase = `adding ${money(item.amount)} ${everyPhrase(item.cadence_days)}${thing ? ` for the ${thing}` : ""} starting ${when.replace(/^on /, "")}`;
+    // "for Netflix" (a brand) but "for the gym membership"
+    const forWhat = thing ? (thing[0] === thing[0].toUpperCase() && thing[0] !== thing[0].toLowerCase() ? ` for ${thing}` : ` for the ${thing}`) : "";
+    let phrase = `adding ${money(item.amount)} ${everyPhrase(item.cadence_days)}${forWhat} starting ${when.replace(/^on /, "")}`;
     if (item.end_day != null) {
       const months = Math.round((item.end_day - item.start_day) / 30);
       phrase += ` for ${months} month${months !== 1 ? "s" : ""}`;

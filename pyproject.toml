@@ -18,4 +18,4 @@ core = ["fixtures/*.json"]
 dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "data/tests", "api/tests", "llm/tests/test_parse_complex.py"]
+testpaths = ["core/tests", "data/tests", "api/tests", "llm/tests"]

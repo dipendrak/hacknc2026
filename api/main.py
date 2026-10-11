@@ -136,6 +136,17 @@ def create_app(*, cache_dir: Path | None = None, db_path: Path | None = None,
                 logger.error("evidence_load_failed error_type=%s", type(exc).__name__)
                 raise HTTPException(503, "Archived evidence is temporarily unavailable") from None
 
+    @app.get("/customers/{customer_id}/runs")
+    def customer_runs(customer_id: str, limit: int = 30):
+        """This customer's recent replays (question, verdict, time), from every channel."""
+        if customer_id not in app.state.cache.snapshots:
+            raise HTTPException(404, "Customer is not cached")
+        try:
+            return app.state.store.recent(customer_id, max(1, min(limit, 100)))
+        except Exception as exc:
+            logger.error("recent_runs_failed error_type=%s", type(exc).__name__)
+            raise HTTPException(503, "Recent replays are temporarily unavailable") from None
+
     @app.get("/run/{run_id}")
     def stored_run(run_id: str):
         try:

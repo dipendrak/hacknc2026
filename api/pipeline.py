@@ -320,6 +320,7 @@ def _term(years: float) -> str:
 _GENERIC_LABELS = {"expense", "purchase", "explicit expense", "test fixture expense", "habit spending", "income",
                    "one-time income", "extra income", "new income", "pay change", "rent ends", "loan", "afford"}
 _ONE_TIME_INCOME = {"bonus", "gift", "refund", "prize", "tax refund", "payout"}
+_PRONOUNS = {"it", "this", "that", "them", "these", "those", "one", "something", "stuff", "thing"}
 
 
 def noun(label: str | None, raw_text: str = "") -> str | None:
@@ -329,7 +330,8 @@ def noun(label: str | None, raw_text: str = "") -> str | None:
     but keeps names like "iPhone" or "DoorDash".
     """
     label = (label or "").strip()
-    if (not label or label.lower() in _GENERIC_LABELS or len(label) > 30 or len(label.split()) > 4
+    if (not label or label.lower() in _GENERIC_LABELS or label.lower() in _PRONOUNS or len(label) > 30
+            or len(label.split()) > 4
             or any(c in label for c in "$?/") or label.lower().endswith((" payment", " proceeds"))):
         return None
     at = raw_text.lower().find(label.lower())
@@ -353,7 +355,8 @@ def _item_phrase(item: DecisionDelta, today: date, raw_text: str = "") -> str:
     if item.kind == "recurring":
         starting = "starting today" if when == "today" else f"starting {when.removeprefix('on ')}"
         phrase = f"adding {_money(item.amount)} {_cadence(item.cadence_days)}"
-        phrase += f" for the {thing}" if thing else ""
+        # "for Netflix" (a brand) but "for the gym membership"
+        phrase += (f" for {thing}" if thing[0].isupper() else f" for the {thing}") if thing else ""
         phrase += f" {starting}"
         if item.end_day is not None:
             months = round((item.end_day - item.start_day) / 30)

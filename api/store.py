@@ -119,6 +119,24 @@ class RunStore:
             raise KeyError(run_id)
         return json.loads(row[0])
 
+    def recent(self, customer_id: str, limit: int = 30) -> list[dict]:
+        """A customer's latest replays, newest first: whatever channel asked them (web, iMessage, API)."""
+        with self.connect() as connection:
+            rows = connection.execute("SELECT run_id, created_at, model_json, delta_json, response_json FROM runs "
+                                      "ORDER BY created_at DESC LIMIT 2000").fetchall()
+        found = []
+        for run_id, created_at, model_json, delta_json, response_json in rows:
+            if json.loads(model_json).get("customer_id") != customer_id:
+                continue
+            delta, response = json.loads(delta_json), json.loads(response_json or "{}")
+            question = delta.get("raw_text") or next((i.get("raw_text") for i in delta.get("items", []) if i.get("raw_text")), "")
+            verdict = (response.get("prose") or "").split("\n\n")[0].strip()
+            found.append({"run_id": run_id, "created_at": created_at, "question": question, "verdict": verdict,
+                          "mode": response.get("mode", "decision")})
+            if len(found) == limit:
+                break
+        return found
+
     def inputs(self, run_id: str) -> dict:
         with self.connect() as connection:
             row = connection.execute("SELECT model_json, delta_json, evidence_json, created_at, response_json FROM runs WHERE run_id = ?", (run_id,)).fetchone()

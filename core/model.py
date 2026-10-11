@@ -1,4 +1,4 @@
-"""Frozen contracts shared by every dev. See 00-ARCHITECTURE.md.
+"""Shared data contracts between the parser, simulation, API and web app.
 
 Field renames go through the group chat. Always.
 """

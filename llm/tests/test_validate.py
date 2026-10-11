@@ -110,7 +110,7 @@ class TestEvidenceExistence:
 
         culprit = make_culprit("Store")
         claims = [
-            make_claim("culprit_amount", 50.0)  # doesn't exist
+            make_claim("culprit_amount", 50.0, evidence=["txn_999"])  # txn_999 does not resolve
         ]
         prose = "Your store purchase was $50."
 
@@ -183,7 +183,7 @@ class TestAdversarial:
         culprit = make_culprit("Gym")
         claims = [
             make_claim("first_breach_week", 65.0),
-            make_claim("commitment_months", 12.0)
+            make_claim("paths_simulated", 12.0)
         ]
 
         # This prose violates the rule: it computes $780 (65 * 12)

@@ -306,3 +306,22 @@ def test_stated_rate_always_wins_over_the_persons_rate():
     d = pc.parse_complex("can I afford a $400k house with 20% down at 6% over 30 years", TODAY,
                          use_llm=False, mortgage_apr=0.0775)
     assert d.terms["loans"][0]["rate_pct"] == 6 and "assumed_loans" not in d.terms
+
+
+# --- "financed X of it" -------------------------------------------------------------------------
+
+def test_financed_share_without_a_term_asks_for_it():
+    with pytest.raises(pc.ComplexParseError, match=r"How long would you take to pay off the \$2,000 loan for the car"):
+        parse("If I wanted to buy a used car for 4000, but financed 2000 of it, would that be fine?")
+
+
+def test_financed_share_with_a_term_is_one_loan_not_two_purchases():
+    d = pc.parse_complex("If I wanted to buy a used car for 4000, but financed 2000 of it over 2 years", TODAY,
+                         use_llm=False, personal_loan_apr=0.12)
+    down, payment = d.items
+    assert (down.amount, down.label) == (2000, "Car down payment")
+    assert payment.end_day == 24 * 30 and d.terms["loans"][0]["principal"] == 2000
+
+
+def test_pronouns_are_never_labels():
+    assert pc.clean_label("it", "Expense") == "Expense" and pc.clean_label("that", "Loan") == "Loan"

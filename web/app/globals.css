@@ -423,6 +423,7 @@ textarea::placeholder, input::placeholder { color: #70899b; opacity: 1; }
 .replay-history, .transaction-list { list-style: none; padding: 0; margin: 12px 0; }
 .replay-history li { display: grid; gap: 5px; padding: 12px 0; border-top: 1px solid #c8e2ed; }
 .replay-history a { color: #135e89; text-decoration: underline; text-underline-offset: 3px; }
+.replay-history .replay-verdict { font-size: 13px; color: #2c4c63; }
 .replay-toolbar, .replay-toolbar > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .replay-toolbar { justify-content: space-between; margin-bottom: 14px; }
 .week-control { display: grid; gap: 8px; margin: 16px 0; font-size: 12px; }

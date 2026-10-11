@@ -7,7 +7,8 @@ async function forward(request: Request, context: { params: Promise<{ path: stri
     ? path.length === 1 && path[0] === "ask"
     : (path.length === 1 && ["health", "customers"].includes(path[0]))
       || (path.length === 2 && ["model", "run", "txn"].includes(path[0]))
-      || (path.length === 3 && path[0] === "run" && path[2] === "inputs");
+      || (path.length === 3 && path[0] === "run" && path[2] === "inputs")
+      || (path.length === 3 && path[0] === "customers" && path[2] === "runs");
   if (!allowed || path.some(segment => !/^[A-Za-z0-9_-]+$/.test(segment))) return Response.json({ detail: "Route not found" }, { status: 404 });
   try {
     const upstream = await fetch(`${backendOrigin()}/${path.map(encodeURIComponent).join("/")}`, {

@@ -1,4 +1,4 @@
-# agent — Photon/Spectrum iMessage agent
+# Pocketwatch iMessage agent
 
 ```bash
 npm ci
@@ -8,14 +8,15 @@ npm run dev              # watches src/, restarts on change
 
 Flow: inbound iMessage → typing indicator → `POST {API_BASE_URL}/ask` →
 reply with prose → send the replay URL. One HTTP call, no Python, no auth —
-just a hardcoded phone → `customer_id` map in `.env`.
+just a phone → `customer_id` map (`CUSTOMER_PHONE_MAP`) in `.env`. After the answer it sends the stats and chart
+image cards from the web app.
 
 If `/ask` errors or times out, the agent sends a human fallback message
 instead of going silent (`src/index.ts`, `handleAsk`).
 
 `ENABLE_REACTION_RERUN=true` turns on the optional thumbs-up re-run: react
 👍 to a result to re-ask with "assume I go ahead with it" applied. Off by
-default — cut it without hesitation if it's not cheap before the demo.
+default.
 
 `npm run typecheck` — no credentials needed, just validates the code.
 
@@ -25,4 +26,4 @@ the frontend URL reachable from that phone. The agent prefers the absolute
 URL returned by the API, so changing only the agent's replay origin will not
 override an API response containing a localhost URL.
 
-See [the manual workflow checklist](../web/MANUAL_TEST.md).
+Texting `test1` to `test5` runs a fixed demo question against the five fixture customers without calling Gemini.

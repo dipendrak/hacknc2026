@@ -1,5 +1,5 @@
-// Mirrors the frozen contracts in 00-ARCHITECTURE.md. Dev A owns the
-// authoritative shapes; this is D's read-only view of them.
+// Mirrors the shared contracts in core/model.py. The Python side owns the
+// authoritative shapes; this is the web app's read-only view of them.
 
 export type ClaimKind =
   | "baseline_breach_rate"
@@ -33,7 +33,7 @@ export interface Culprit {
   breach_rate_without: number;
   marginal_contribution: number;
   evidence: string[];
-  // Present on the live API (core.model.Driver), not in 00-ARCHITECTURE.md.
+  // Present on the live API (core.model.Driver).
   essential: boolean;
 }
 
@@ -108,4 +108,7 @@ export interface AskResponse {
   run_id: string; prose: string; replay_url: string; validated: boolean;
   rendered_by?: string; render_failure_reason?: string | null;
 }
-export interface SavedReplay { run_id: string; question: string; customer: string; prose: string; createdAt: string }
+// customer_id is absent on entries saved before per-user history.
+/** One row of GET /customers/{id}/runs: a replay asked from any channel (web, iMessage). */
+export interface RecentRun { run_id: string; created_at: string; question: string; verdict: string; mode: string }
+export interface SavedReplay { run_id: string; question: string; customer: string; prose: string; createdAt: string; customer_id?: string }

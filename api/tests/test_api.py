@@ -434,7 +434,7 @@ def test_unaccountable_numbers_are_refused_with_a_hint(setup):
         # A home loan's missing term defaults to 30 years, but a car loan's term is never guessed.
         response = ask(client, text="can I afford a $30k car at 7%")
         assert response.status_code == 422
-        assert "Try one clear sentence" in response.json()["detail"]
+        assert "How long would you take to pay off the loan for the car" in response.json()["detail"]
 
 
 def test_old_single_delta_runs_still_load_in_inputs(setup):
@@ -447,3 +447,17 @@ def test_old_single_delta_runs_still_load_in_inputs(setup):
             c.execute("UPDATE runs SET delta_json = ? WHERE run_id = ?", (json.dumps(flat), run_id))
         inputs = client.get(f"/run/{run_id}/inputs").json()
         assert inputs["delta"]["amount"] == 1400 and len(inputs["decision"]["items"]) == 1
+
+
+def test_recent_runs_lists_one_customers_replays_newest_first(setup):
+    with TestClient(create_app(**setup, pipeline=offline_pipeline())) as client:
+        first = ask(client, text="Can I afford $1400 today?").json()
+        second = ask(client, text="spend $65/month in 30 days").json()
+        other = client.post("/ask", json={"text": "Can I afford $1400 today?", "customer_id": "demo_irregular"})
+        assert other.status_code == 200, other.text
+        runs = client.get("/customers/demo_steady/runs").json()
+        assert [r["run_id"] for r in runs] == [second["run_id"], first["run_id"]]  # not demo_irregular's run
+        assert runs[1]["question"] == "Can I afford $1400 today?"
+        assert runs[1]["verdict"] == first["prose"].split("\n\n")[0]
+        assert client.get("/customers/demo_steady/runs", params={"limit": 1}).json()[0]["run_id"] == second["run_id"]
+        assert client.get("/customers/nobody/runs").status_code == 404

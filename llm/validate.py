@@ -74,7 +74,7 @@ class NumberValidator:
 
         # Extract evidence IDs from claims
         for claim in claims:
-            for txn_id in claim.evidence_ids:
+            for txn_id in claim.evidence:
                 if txn_id not in self.txn_cache:
                     exists = self.txn_resolver(txn_id)
                     self.txn_cache[txn_id] = exists

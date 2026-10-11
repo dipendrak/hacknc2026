@@ -38,6 +38,7 @@ AMOUNT_WORDS = {"spend", "spending", "spent", "buy", "buying", "pay", "paying", 
                 "of", "about", "around", "is", "was", "at", "afford", "make", "made", "making", "earn", "get", "got",
                 "borrow", "owe", "save", "with", "and", "or", "plus", "extra", "only", "just", "maybe", "like",
                 "take", "rent", "loan", "salary", "bonus", "raise", "down", "over", "under", "to", "by", "worth"}
+PRONOUNS = {"it", "this", "that", "them", "these", "those", "one", "something", "stuff", "thing"}
 PRODUCT_SUFFIXES = ("pro", "max", "ultra", "plus", "mini", "air", "series", "se", "lite", "edition", "gen")
 PURCHASE_CUES = ("house", "home", "condo", "mortgage", "loan", "car", "borrow", "financ", "financed",
                  "financing", "lease")
@@ -84,6 +85,18 @@ def normalize_text(text: str) -> str:
         value = float(m.group(2).replace(",", "")) * (1_000_000 if m.group(3).lower() == "million" else 1000)
         return f"{m.group(1) or ''}{value:.0f}"
     return re.sub(r"(\$\s?)?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(grand|thousand|million)\b", scaled, text, flags=re.I)
+
+
+class LoanTermMissing(ValueError):
+    """A loan we can't guess the length of (anything but a home). The message asks the person for it."""
+
+    def __init__(self, label: str, price: float | None = None, financed: float | None = None):
+        thing = label.lower() if label and label.lower() not in ("loan", "expense") else "it"
+        amount = f"${financed:,.0f} " if financed else ""
+        example = (f'"...a {thing} for ${price:,.0f}, financing ${financed:,.0f} over 2 years"'
+                   if price and financed else f'"...a {thing} loan over 2 years"')
+        super().__init__(f"How long would you take to pay off the {amount}loan for the {thing}? "
+                         f"Tell me the term, for example: {example}.")
 
 
 class ComplexParseError(ValueError):
@@ -302,13 +315,16 @@ def regex_spec(text: str, today: date) -> dict:
     counts = {id(c) for c, _ in qty.values()}
     money = [t for t in money if id(t) not in counts]
 
-    down_money, payments, purchase, expenses, incomes = [], [], [], [], []
+    down_money, payments, purchase, expenses, incomes, financed = [], [], [], [], [], []
     for t in money:
         w = _window(text, t)
         pre, post = (x.split() for x in w.split(" | "))
         lo, hi = _clause_bounds(text, t["start"])
         clause = text[lo:hi]
         cad = _cadence(t["after"])
+        if pre and pre[-1].startswith(("financ", "borrow")) and post[:1] == ["of"]:
+            financed.append(t)  # "financed 2000 of it": the borrowed share of a purchase
+            continue
         if "down" in post[:2] or re.search(r"down( ?payment)?( of| is| was)?$", " ".join(pre[-3:])):
             down_money.append(t)
             continue
@@ -347,7 +363,8 @@ def regex_spec(text: str, today: date) -> dict:
                                "net": any(n in low for n in NET_WORDS), "start_day": 0 if purchase else start_for(clause, 0),
                                "label": _income_label(cl, cad)})
 
-    loans = [{"tok": t, "clause": clause, "cad": cad, "down": [], "down_pct": [], "rate": [], "term": [], "payment": []}
+    loans = [{"tok": t, "clause": clause, "cad": cad, "down": [], "down_pct": [], "rate": [], "term": [], "payment": [],
+              "financed": []}
              for t, w, clause, cad in sorted(purchase, key=lambda x: x[0]["start"])]
 
     def owner(tok):
@@ -355,7 +372,16 @@ def regex_spec(text: str, today: date) -> dict:
         before = [i for i, ln in enumerate(loans) if ln["tok"]["start"] <= tok["start"]]
         return loans[before[-1] if before else 0]
 
+    if financed and not loans:
+        # "buy a used car for 4000, but financed 2000 of it": the purchase is the first plain amount
+        if not expenses:
+            raise ComplexParseError("financed amount without a purchase")
+        t, w, clause, cad = expenses.pop(0)
+        loans.append({"tok": t, "clause": clause, "cad": cad, "down": [], "down_pct": [], "rate": [], "term": [],
+                      "payment": [], "financed": []})
     if loans:
+        for t in financed:
+            owner(t)["financed"].append(t)
         for t in down_money:
             owner(t)["down"].append(t)
         for t in down_pct:
@@ -389,7 +415,8 @@ def regex_spec(text: str, today: date) -> dict:
 
     for ln in loans:
         t = ln["tok"]
-        if any(len(ln[k]) > 1 for k in ("down", "down_pct", "rate", "term", "payment")) or (ln["down"] and ln["down_pct"]):
+        if any(len(ln[k]) > 1 for k in ("down", "down_pct", "rate", "term", "payment", "financed")) or (
+                sum(bool(ln[k]) for k in ("down", "down_pct", "financed")) > 1):
             raise ComplexParseError("a loan has two rates, terms, payments or down payments")
         term = ln["term"][0] if ln["term"] else None
         years = None if term is None else (term["value"] / 12 if term["unit"] == "month" else term["value"])
@@ -397,16 +424,18 @@ def regex_spec(text: str, today: date) -> dict:
                 "down_pct": ln["down_pct"][0]["value"] if ln["down_pct"] else None,
                 "rate_pct": ln["rate"][0]["value"] if ln["rate"] else None, "years": years,
                 "payment": ln["payment"][0]["value"] if ln["payment"] else None,
+                "financed": ln["financed"][0]["value"] if ln["financed"] else None,
                 "start_day": start_for(ln["clause"], global_start or 0),
                 "label": _item_label(text, t, ln["clause"], "Loan")}
-        plain = all(loan[k] is None for k in ("down", "down_pct", "rate_pct", "years", "payment"))
+        plain = all(loan[k] is None for k in ("down", "down_pct", "rate_pct", "years", "payment", "financed"))
         if plain:  # a cash purchase of a house/car/etc.
             spec["expenses"].append({"amount": t["value"], "cadence": ln["cad"] or "once", "months": None,
                                      "start_day": loan["start_day"], "label": loan["label"]})
         elif loan["rate_pct"] is not None and loan["payment"] is not None:
             raise ComplexParseError("a loan has both a rate and a monthly payment")
         elif years is None and not is_home_loan({"label": f'{loan["label"]} {ln["clause"]}', "years": 0}):
-            raise ComplexParseError("a loan needs a term")  # only a home loan gets a default (30 years)
+            # Only a home loan gets a default (30 years); ask for anything else's term instead of guessing.
+            raise LoanTermMissing(loan["label"], loan["price"], loan["financed"])
         else:
             # A missing rate (or a home loan's missing term) is filled in from the person's own settings
             # by build_decision, and the answer says so.
@@ -459,7 +488,7 @@ def clean_label(label, default: str) -> str:
     """Short, display-safe label; falls back to `default` for anything odd."""
     label = re.sub(r"\s+", " ", str(label or "")).strip(" .,!?:;\"'")
     label = re.sub(r"^(a|an|the|my|our)\s+", "", label, flags=re.IGNORECASE)
-    if not label or len(label) > 40 or "?" in label or "$" in label:
+    if not label or len(label) > 40 or "?" in label or "$" in label or label.lower() in PRONOUNS:
         return default
     if not (len(label) > 1 and label[0].islower() and label[1].isupper()):  # keep "iPhone", "eBay"
         label = label[0].upper() + label[1:]
@@ -483,6 +512,8 @@ def spec_numbers(spec: dict) -> Counter:
             c[("money", float(loan["down"]))] += 1
         if loan.get("payment"):
             c[("money", float(loan["payment"]))] += 1
+        if loan.get("financed"):
+            c[("money", float(loan["financed"]))] += 1
         if loan.get("down_pct") is not None:
             c[("pct", float(loan["down_pct"]))] += 1
         if loan.get("rate_pct") is not None:
@@ -625,8 +656,9 @@ def build_decision(spec: dict, text: str, confidence: float = 0.85, default_net_
     loan_terms = []
     for loan in spec.get("loans", []):
         price = float(loan["price"])
-        down = float(loan["down"]) if loan.get("down") else (
-            price * float(loan["down_pct"]) / 100 if loan.get("down_pct") is not None else 0.0)
+        down = (float(loan["down"]) if loan.get("down") else
+                price * float(loan["down_pct"]) / 100 if loan.get("down_pct") is not None else
+                price - float(loan["financed"]) if loan.get("financed") else 0.0)
         if price <= 0 or down < 0 or down >= price:
             raise ValueError("bad loan")
         stated = float(loan["payment"]) if loan.get("payment") else None
@@ -636,7 +668,7 @@ def build_decision(spec: dict, text: str, confidence: float = 0.85, default_net_
         assumed = {}
         if years is None:
             if not home_loan:
-                raise ValueError("a loan needs a term")
+                raise LoanTermMissing(loan_label, price, float(loan["financed"]) if loan.get("financed") else None)
             years = assumed["years"] = MORTGAGE_DEFAULT_YEARS
         if stated:
             rate = None
@@ -688,9 +720,12 @@ Fields:
   payments if the text limits it else null, "start", "label"}}
 - "loans": something bought with a loan or mortgage, or money borrowed. {{"price", "down", "down_pct",
   "rate_pct", "payment" (monthly payment ONLY if the text states it instead of a rate), "years" (the term),
+  "financed" (the amount borrowed when the text says "financed/borrowed X of it"; else null),
   "start", "label"}}. A $3000 loan repaid with $300 payments over 1 year is price 3000, payment 300, years 1.
   Leave "rate_pct" and "years" null when the message doesn't state them; never guess a rate or a term
   ("a $400k house with 20% down" -> rate_pct null, years null; the app fills in the person's own rate).
+  The borrowed part of a purchase is part of that loan, never a second expense: "buy a used car for 4000 but
+  finance 2000 of it" -> loans: price 4000, financed 2000, years null.
 - "ignored": numbers that are NOT money, a quantity, a rate or a loan term: model numbers ("iPhone 18" -> 18),
   "2 kids", and the number inside a start time ("in 6 months" -> 6). Never a $ amount, a "k" amount, a
   percentage or a loan length.
@@ -839,18 +874,20 @@ def parse_with_gemini(text: str, today: date, net_factor: float = NET_FACTOR, **
 
 def parse_complex(text: str, today: date, *, use_llm: bool = True, net_factor: float = NET_FACTOR, **rates: float) -> Decision:
     """Regex grammar, then LLM fallback. Raises ComplexParseError if neither can account for every number."""
-    errors: list[str] = []
+    errors: list[Exception] = []
     raw_text, text = text, normalize_text(text)
     try:
         return build_decision(regex_spec(text, today), raw_text, 0.85, net_factor, **rates)
     except (ComplexParseError, ValueError, KeyError) as exc:
-        errors.append(str(exc))
+        errors.append(exc)
     if use_llm:
         try:
             return build_decision(llm_spec(text, today), raw_text, 0.7, net_factor, **rates)
         except Exception as exc:  # network, JSON, coverage, validation
-            errors.append(str(exc))
-    raise ComplexParseError(HINT)
+            errors.append(exc)
+    # A specific question ("how long would you take to pay it off?") beats the generic hint.
+    missing = next((e for e in errors if isinstance(e, LoanTermMissing)), None)
+    raise ComplexParseError(str(missing) if missing else HINT)
 
 
 def needs_complex(text: str) -> bool:

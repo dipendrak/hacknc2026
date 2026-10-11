@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ApiError, askDecision, fetchCustomers, fetchModel } from "@/lib/api";
+import { ApiError, askDecision, fetchCustomers, fetchModel, fetchRecentRuns } from "@/lib/api";
 import type { Customer, CashflowModel, SavedReplay } from "@/lib/types";
 import { ArrowRight, ArrowUpRight, Landmark, ChartNoAxesColumnIncreasing, History, ChevronRight, Check, Plus, PencilLine, RotateCcw } from "lucide-react";
 import { AppShell, type WorkspaceView } from "./app-shell";
@@ -23,6 +23,17 @@ const BACKGROUNDS = [
   { id: "flight", name: "Open skies", src: "/images/aero-globe-flight.jpg" },
 ] as const;
 
+// The answer's opening sentence ("Spending $400 today looks manageable."), so repeated questions are told apart.
+function verdictLine(prose: string): string {
+  const first = prose.split(/\n/)[0]?.trim() ?? "";
+  return first.length > 140 ? `${first.slice(0, 137).trimEnd()}…` : first;
+}
+
+function askedAt(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export function Workspace({ view }: { view: WorkspaceView | null }) {
   const router = useRouter();
   const session = useSession();
@@ -36,6 +47,8 @@ export function Workspace({ view }: { view: WorkspaceView | null }) {
   const [pending, setPending] = React.useState(false);
   const [requestStatus, setRequestStatus] = React.useState("");
   const [recent, setRecent] = React.useState<SavedReplay[]>([]);
+  // Replays the API saved for this person from any channel (texts included), not just this browser.
+  const [serverRecent, setServerRecent] = React.useState<SavedReplay[]>([]);
   const submitting = React.useRef(false);
   const [connectionVersion, setConnectionVersion] = React.useState(0);
   const [drafts, setDrafts] = React.useState<Draft[]>([]);
@@ -49,6 +62,16 @@ export function Workspace({ view }: { view: WorkspaceView | null }) {
   const [example, setExample] = React.useState(0);
   const [removed, setRemoved] = React.useState<Draft | null>(null);
   const textarea = React.useRef<HTMLTextAreaElement>(null);
+
+  React.useEffect(() => {
+    if (!signedInCustomer) return;
+    const controller = new AbortController();
+    fetchRecentRuns(signedInCustomer, controller.signal).then(runs => setServerRecent(runs.map(r => ({
+      run_id: r.run_id, question: r.question, prose: r.verdict, createdAt: r.created_at,
+      customer: session?.user.name ?? "", customer_id: signedInCustomer,
+    })))).catch(() => { /* The browser's own history still shows. */ });
+    return () => controller.abort();
+  }, [signedInCustomer, session?.user.name, recent.length]);
 
   // The workspace needs a sign-in; replay links (/r/...) stay open to anyone with the link.
   React.useEffect(() => {
@@ -122,7 +145,7 @@ export function Workspace({ view }: { view: WorkspaceView | null }) {
     try {
       const response = await askDecision(question, customerId);
       if (response.validated !== true || !response.run_id) throw new Error("The service returned an unchecked result. Your question has been kept.");
-      const entry: SavedReplay = { run_id: response.run_id, question, customer: customers.find(c => c.customer_id === customerId)?.name ?? customerId, prose: response.prose, createdAt: new Date().toISOString() };
+      const entry: SavedReplay = { run_id: response.run_id, question, customer: customers.find(c => c.customer_id === customerId)?.name ?? customerId, customer_id: customerId, prose: response.prose, createdAt: new Date().toISOString() };
       const next = [entry, ...recent].slice(0, 30);
       setRecent(next);
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ drafts, preferences, composer: text, wallpaperVersion: 2, customerId, recent: next })); } catch { /* Saved API replay remains available without local history. */ }
@@ -133,7 +156,14 @@ export function Workspace({ view }: { view: WorkspaceView | null }) {
       textarea.current?.focus();
     } finally { window.clearTimeout(timer); submitting.current = false; setPending(false); setRequestStatus(""); }
   }
-  const recentList = recent.length > 0 && <AeroPanel className="result-panel"><h2>Recent simulations</h2><ul className="replay-history">{recent.map(run => <li key={run.run_id}><Link href={`/r/${encodeURIComponent(run.run_id)}`}>{run.question}</Link><span className="small-copy">{displayName(run.customer)}</span></li>)}</ul></AeroPanel>;
+  // Only the signed-in person's replays (this history is per browser, shared by everyone who signs in on it).
+  const local = recent.filter(run => run.customer_id ? run.customer_id === signedInCustomer
+    : displayName(run.customer) === session?.user.name);
+  const seen = new Set<string>();
+  const mine = [...serverRecent, ...local]
+    .filter(run => !seen.has(run.run_id) && seen.add(run.run_id))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 30);
+  const recentList = mine.length > 0 && <AeroPanel className="result-panel"><h2>Recent simulations</h2><ul className="replay-history">{mine.map(run => <li key={run.run_id}><Link href={`/r/${encodeURIComponent(run.run_id)}`}>{run.question}</Link><span className="replay-verdict">{verdictLine(run.prose)}</span><span className="small-copy">{askedAt(run.createdAt)}</span></li>)}</ul></AeroPanel>;
 
   const draftList = (
     <AeroPanel className="scenario-panel" aria-labelledby="scenarios-heading">
@@ -166,7 +196,7 @@ export function Workspace({ view }: { view: WorkspaceView | null }) {
     {view === "overview" || view === "scenarios" ? <>
       <div className="page-heading"><h1>{view === "overview" ? "A little clarity for what comes next." : "Make space for your next idea."}</h1><p>{view === "overview" ? "Make room for your next decision." : "Run a saved draft or revisit a simulation."}</p></div>
       {view === "overview" && composer}
-      <div className="overview-grid">{draftList}<AeroPanel className="workspace-panel"><h2>Your workspace</h2><div className="workspace-status"><span className="status-icon"><Landmark size={22} strokeWidth={1.5} aria-hidden="true" /></span><div><h3>Bank profile</h3><p>{model ? displayName(customers.find(c => c.customer_id === customerId)?.name ?? "Profile loaded") : modelError ? "Profile unavailable" : connecting ? "Connecting…" : connectionError ? "API unavailable" : "Loading profile…"}</p></div></div><div className="workspace-status"><span className="status-icon"><ChartNoAxesColumnIncreasing size={22} strokeWidth={1.5} aria-hidden="true" /></span><div><h3>Simulation</h3><p>{recent.length ? `${recent.length} saved replay${recent.length === 1 ? "" : "s"}` : "Not run yet"}</p></div></div><Link className="workspace-action" href="/?view=replays"><History size={20} strokeWidth={1.5} aria-hidden="true" />Open a replay<ChevronRight size={17} strokeWidth={1.5} aria-hidden="true" /></Link></AeroPanel></div>
+      <div className="overview-grid">{draftList}<AeroPanel className="workspace-panel"><h2>Your workspace</h2><div className="workspace-status"><span className="status-icon"><Landmark size={22} strokeWidth={1.5} aria-hidden="true" /></span><div><h3>Bank profile</h3><p>{model ? displayName(customers.find(c => c.customer_id === customerId)?.name ?? "Profile loaded") : modelError ? "Profile unavailable" : connecting ? "Connecting…" : connectionError ? "API unavailable" : "Loading profile…"}</p></div></div><div className="workspace-status"><span className="status-icon"><ChartNoAxesColumnIncreasing size={22} strokeWidth={1.5} aria-hidden="true" /></span><div><h3>Simulation</h3><p>{mine.length ? `${mine.length} saved replay${mine.length === 1 ? "" : "s"}` : "Not run yet"}</p></div></div><Link className="workspace-action" href="/?view=replays"><History size={20} strokeWidth={1.5} aria-hidden="true" />Open a replay<ChevronRight size={17} strokeWidth={1.5} aria-hidden="true" /></Link></AeroPanel></div>
       {recentList}
     </> : view === "replays" ? <>
       <div className="page-heading"><h1>A second look at a decision.</h1><p>Open a saved simulation using its replay ID.</p></div>

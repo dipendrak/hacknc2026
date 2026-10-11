@@ -167,3 +167,12 @@ def test_a_loans_own_down_payment_is_never_financed():
 def test_no_amount_message_explains_what_to_ask():
     from api.pipeline import NO_AMOUNT
     assert NO_AMOUNT.startswith("Please include a dollar amount") and "$400 phone" in NO_AMOUNT
+
+
+def test_brands_take_no_article_and_pronouns_are_not_names():
+    from api.pipeline import describe_decision, noun
+    from llm import parse_complex as pc
+    netflix = pc.parse_complex("If I were to get Netflix for $20 a month starting today, would I be fine?", TODAY,
+                               use_llm=False)
+    assert describe_decision(netflix, TODAY) == "Adding $20 a month for Netflix starting today"
+    assert noun("It", "financed 2000 of it") is None

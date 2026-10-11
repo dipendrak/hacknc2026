@@ -1,4 +1,4 @@
-import type { AskResponse, CashflowModel, Customer } from "./types";
+import type { AskResponse, CashflowModel, Customer, RecentRun } from "./types";
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
@@ -10,6 +10,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 export const fetchCustomers = (signal?: AbortSignal) => request<Customer[]>("customers", { signal });
 export const fetchModel = (id: string, signal?: AbortSignal) => request<CashflowModel>(`model/${encodeURIComponent(id)}`, { signal });
+export const fetchRecentRuns = (customerId: string, signal?: AbortSignal) =>
+  request<RecentRun[]>(`customers/${encodeURIComponent(customerId)}/runs`, { signal });
 export const askDecision = (text: string, customer_id: string) => request<AskResponse>("ask", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, customer_id }),
 });

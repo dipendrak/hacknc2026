@@ -12,11 +12,8 @@ function percentile(sorted: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
 }
 
-// Computes a p10/p50/p90 band per week from the full path set. The frozen
-// SimResult contract ships full per-path balances, so we derive the band
-// client-side rather than waiting on a server-side downsample (see
-// 00-ARCHITECTURE.md Round 3 handshake, Dev A). If A ever ships a
-// pre-downsampled `band` field, swap this out for a straight pass-through.
+// Computes a p10/p50/p90 band per week from the full path set. SimResult ships
+// full per-path balances, so the band is derived here in the browser.
 export function computeWeeklyBand(paths: SimPath[]): WeeklyBand[] {
   if (paths.length === 0) return [];
   const weeks = Math.max(...paths.map((p) => p.balances.length));
