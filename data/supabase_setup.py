@@ -120,7 +120,8 @@ def apply(check_only: bool = False) -> int:
     logins = [DemoLogin(c["display_name"], c["customer_id"]) for c in customers]
     with psycopg.connect(db_url, connect_timeout=15) as conn:
         if check_only:
-            for table in ("customers", "profiles", "phone_links", "settings", "customer_settings", "runs", "transactions"):
+            for table in ("customers", "profiles", "phone_links", "settings", "customer_settings", "runs", "transactions",
+                          "transaction_units", "run_units"):
                 exists = conn.execute("select to_regclass(%s)", (f"public.{table}",)).fetchone()[0]
                 count = conn.execute(f"select count(*) from public.{table}").fetchone()[0] if exists else "-"
                 print(f"  {table:13} {'ok' if exists else 'MISSING':8} rows: {count}")

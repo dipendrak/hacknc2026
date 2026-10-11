@@ -67,28 +67,8 @@ drop trigger if exists customers_touch on public.customers;
 create trigger customers_touch before update on public.customers
   for each row execute function public.touch_updated_at();
 
--- ---------------------------------------------------------------------------------------------------
--- Saved replays (Postgres version of api/store.py's SQLite tables; not used by the API yet).
--- SQLite's run_units / transaction_units side tables fold into columns here.
--- ---------------------------------------------------------------------------------------------------
-create table if not exists public.runs (
-  run_id      text primary key,
-  customer_id text references public.customers (customer_id),
-  created_at  timestamptz not null default now(),
-  result      jsonb not null,
-  model       jsonb not null,
-  decision    jsonb not null,
-  response    jsonb not null,
-  evidence    jsonb not null,
-  units       jsonb
-);
-create index if not exists runs_customer_created on public.runs (customer_id, created_at desc);
-
-create table if not exists public.transactions (
-  txn_id        text primary key,   -- Nessie transaction _id
-  record        jsonb not null,     -- the untouched Nessie record
-  monetary_unit text not null check (monetary_unit in ('usd', 'usd_cents'))
-);
+-- Saved replays (runs, transactions, transaction_units, run_units) are created by api/store.py's RunStore
+-- (RUN_STORE=postgres) with the same columns as its SQLite file; 0003 makes sure they're locked down.
 
 -- ---------------------------------------------------------------------------------------------------
 -- Row-level security. No policy = no browser access (the API still has full access).
@@ -97,8 +77,6 @@ alter table public.customers    enable row level security;
 alter table public.profiles     enable row level security;
 alter table public.phone_links  enable row level security;
 alter table public.settings     enable row level security;
-alter table public.runs         enable row level security;
-alter table public.transactions enable row level security;
 
 -- The signed-in user's customer, from the login token's app_metadata.
 create or replace function public.current_customer_id() returns text
@@ -112,10 +90,6 @@ create policy "read own profile" on public.profiles
 
 drop policy if exists "read own customer" on public.customers;
 create policy "read own customer" on public.customers
-  for select to authenticated using (customer_id = (select public.current_customer_id()));
-
-drop policy if exists "read own runs" on public.runs;
-create policy "read own runs" on public.runs
   for select to authenticated using (customer_id = (select public.current_customer_id()));
 
 -- Assumptions aren't secret: anyone may read them (e.g. to show "assumes 22% tax").
